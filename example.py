@@ -1,14 +1,22 @@
 import cv2
 import matplotlib.pyplot as plt
-from perfectPixel import get_perfect_pixel
+from perfectPixelnoCV2 import get_perfect_pixel
 
-bgr = cv2.imread("image.png", cv2.IMREAD_COLOR)
+path = "shanxi.jpg"
+path = "113.png"
+bgr = cv2.imread(path, cv2.IMREAD_COLOR)
+
 if bgr is None:
-    raise FileNotFoundError("Cannot read image: image.png")
+    raise FileNotFoundError(f"Cannot read image: {path}")
 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
-w, h, out = get_perfect_pixel(rgb, debug=True)
+w, h, out = get_perfect_pixel(rgb,refine_intensity=0.3, debug=True)
 
+if w is None or h is None:
+    print("Failed to generate pixel-perfect image.")
+    exit(1)
+
+# display
 plt.figure(figsize=(10, 4))
 plt.subplot(1, 2, 1)
 plt.title("Input")
@@ -21,3 +29,11 @@ plt.imshow(out)
 plt.axis("off")
 
 plt.show()
+
+# save output
+out_bgr = cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
+cv2.imwrite("output.png", out_bgr)
+
+# save 8x scaled output
+out_8x = cv2.resize(out_bgr, (w * 16, h * 16), interpolation=cv2.INTER_NEAREST)
+cv2.imwrite("output_8x.png", out_8x)

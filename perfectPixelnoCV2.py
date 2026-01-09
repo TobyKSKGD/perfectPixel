@@ -1,21 +1,90 @@
-import argparse
 import numpy as np
-import cv2
+
+
+# ----------------------------
+# Small utilities (no cv2)
+# ----------------------------
+
+def rgb_to_gray(image_rgb: np.ndarray) -> np.ndarray:
+    """RGB uint8/float -> gray float32"""
+    img = image_rgb.astype(np.float32)
+    if img.ndim == 2:
+        return img
+    # assume RGB
+    return (0.299 * img[..., 0] + 0.587 * img[..., 1] + 0.114 * img[..., 2]).astype(np.float32)
+
+
+def normalize_minmax(x: np.ndarray, a=0.0, b=1.0) -> np.ndarray:
+    x = x.astype(np.float32, copy=False)
+    mn = float(x.min())
+    mx = float(x.max())
+    if mx - mn < 1e-8:
+        return np.zeros_like(x, dtype=np.float32) + a
+    y = (x - mn) / (mx - mn)
+    return (a + (b - a) * y).astype(np.float32)
+
+
+def conv2d_same(image: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+    """2D convolution (same) for grayscale float32, naive but ok for demo sizes."""
+    img = image.astype(np.float32, copy=False)
+    k = kernel.astype(np.float32, copy=False)
+    kh, kw = k.shape
+    ph, pw = kh // 2, kw // 2
+    pad = np.pad(img, ((ph, ph), (pw, pw)), mode="reflect")
+    out = np.zeros_like(img, dtype=np.float32)
+
+    # sum of shifted windows (vectorized over shifts)
+    for dy in range(kh):
+        for dx in range(kw):
+            w = k[dy, dx]
+            if w == 0:
+                continue
+            out += w * pad[dy:dy + img.shape[0], dx:dx + img.shape[1]]
+    return out
+
+
+def sobel_xy(gray: np.ndarray, ksize: int = 3):
+    """Return (gx, gy) similar to cv2.Sobel for ksize 3 or 5."""
+    if ksize == 3:
+        kx = np.array([[-1, 0, 1],
+                       [-2, 0, 2],
+                       [-1, 0, 1]], dtype=np.float32)
+        ky = np.array([[-1, -2, -1],
+                       [ 0,  0,  0],
+                       [ 1,  2,  1]], dtype=np.float32)
+    elif ksize == 5:
+        # Common 5x5 Sobel kernel (approx). Good enough for grid refinement.
+        kx = np.array([[-5, -4,  0,  4,  5],
+                       [-8, -10, 0, 10,  8],
+                       [-10,-20, 0, 20, 10],
+                       [-8, -10, 0, 10,  8],
+                       [-5, -4,  0,  4,  5]], dtype=np.float32)
+        ky = kx.T
+    else:
+        raise ValueError("ksize must be 3 or 5")
+
+    gx = conv2d_same(gray, kx)
+    gy = conv2d_same(gray, ky)
+    return gx, gy
+
+
+def magnitude(gx: np.ndarray, gy: np.ndarray) -> np.ndarray:
+    return np.sqrt(gx * gx + gy * gy).astype(np.float32)
+
+
+# ----------------------------
+# Your original logic (ported)
+# ----------------------------
 
 def compute_fft_magnitude(gray_image):
     f = np.fft.fft2(gray_image.astype(np.float32))
     fshift = np.fft.fftshift(f)
     mag = np.abs(fshift)
-    mag = 1 - np.log1p(mag)  # log(1 + |F|)
-    # normalize to [0, 1]
-    mn, mx = float(mag.min()), float(mag.max())
-    if mx - mn < 1e-8:
-        return np.zeros_like(mag, dtype=np.float32)
-    mag = (mag - mn) / (mx - mn)
-    return mag
+    mag = 1 - np.log1p(mag)
+    return normalize_minmax(mag, 0.0, 1.0)
 
-def smooth_1d(v, k = 17):
-    """Simple 1D smoothing with a Gaussian-like kernel (no scipy)."""
+
+def smooth_1d(v, k=17):
     k = int(k)
     if k < 3:
         return v
@@ -25,71 +94,73 @@ def smooth_1d(v, k = 17):
     x = np.arange(k) - k // 2
     ker = np.exp(-(x * x) / (2 * sigma * sigma))
     ker = ker / (ker.sum() + 1e-8)
-    vv = np.convolve(v, ker, mode="same")
-    return vv
+    return np.convolve(v, ker, mode="same")
 
-def detect_peak(proj, peak_width = 6, rel_thr=0.35, min_dist=6):
-    print("Detecting peaks...")
+
+def detect_peak(proj, peak_width=6, rel_thr=0.35, min_dist=6, debug=False):
+    if debug:
+        print("Detecting peaks...")
     center = len(proj) // 2
-
     mx = float(proj.max())
     if mx < 1e-6:
         return None
 
     thr = mx * float(rel_thr)
-    
+
     candidates = []
     for i in range(1, len(proj) - 1):
         is_peak = True
         for j in range(1, peak_width):
             if i - j < 0 or i + j >= len(proj):
                 continue
-            if proj[i-j+1] < proj[i - j] or proj[i+j-1] < proj[i + j]:
+            if proj[i - j + 1] < proj[i - j] or proj[i + j - 1] < proj[i + j]:
                 is_peak = False
-                break  
+                break
         if is_peak and proj[i] >= thr:
             left_climb = 0
             for k in range(i, 0, -1):
-                if proj[k] > proj[k-1]:
-                    left_climb = abs(proj[i] - proj[k-1])
+                if proj[k] > proj[k - 1]:
+                    left_climb = abs(proj[i] - proj[k - 1])
                 else:
                     break
 
             right_fall = 0
             for k in range(i, len(proj) - 1):
-                if proj[k] > proj[k+1]:
-                    right_fall = abs(proj[i] - proj[k+1])
+                if proj[k] > proj[k + 1]:
+                    right_fall = abs(proj[i] - proj[k + 1])
                 else:
                     break
-            
+
             candidates.append({
-                'index': i,
-                'climb': left_climb,
-                'fall': right_fall,
-                'score': max(left_climb, right_fall)
+                "index": i,
+                "climb": left_climb,
+                "fall": right_fall,
+                "score": max(left_climb, right_fall),
             })
 
     if not candidates:
-        print("No peaks found.")
+        if debug:
+            print("No peaks found.")
         return None
 
-    # enforce a dead-zone around center
-    left = [i for i in candidates if i['index'] < center - min_dist and i['index'] > center * 0.25]
-    right = [i for i in candidates if i['index'] > center + min_dist and i['index'] < center * 1.75]
+    left = [c for c in candidates if c["index"] < center - min_dist and c["index"] > center * 0.25]
+    right = [c for c in candidates if c["index"] > center + min_dist and c["index"] < center * 1.75]
 
-    left.sort(key=lambda x: x['score'], reverse=True)
-    right.sort(key=lambda x: x['score'], reverse=True)
+    left.sort(key=lambda x: x["score"], reverse=True)
+    right.sort(key=lambda x: x["score"], reverse=True)
 
     if not left or not right:
-        print("Not enough peaks found on both sides.")
+        if debug:
+            print("Not enough peaks found on both sides.")
         return None
 
-    # pick nearest to center on each side
-    peak_left = left[0]['index']   
-    peak_right = right[0]['index']  
-    print(f"Detected peaks at: left = {peak_left}, right = {peak_right}")
+    peak_left = left[0]["index"]
+    peak_right = right[0]["index"]
+    if debug:
+        print(f"Detected peaks at: left={peak_left}, right={peak_right}")
 
-    return abs(peak_right - peak_left)/2
+    return abs(peak_right - peak_left) / 2
+
 
 def find_best_grid(origin, range_val_min, range_val_max, grad_mag, thr = 0):
     best = round(origin)
@@ -112,17 +183,16 @@ def find_best_grid(origin, range_val_min, range_val_max, grad_mag, thr = 0):
     best = peaks[0][1]
     return best
 
+
 def sample_center(image, x_coords, y_coords):
     x = np.asarray(x_coords)
     y = np.asarray(y_coords)
+    centers_x = ((x[1:] + x[:-1]) * 0.5).astype(np.int32)
+    centers_y = ((y[1:] + y[:-1]) * 0.5).astype(np.int32)
+    return image[centers_y[:, None], centers_x[None, :]]
 
-    centers_x = np.clip((x[1:] + x[:-1]) * 0.5, 0, image.shape[1] - 1).astype(np.int32)
-    centers_y = np.clip((y[1:] + y[:-1]) * 0.5, 0, image.shape[0] - 1).astype(np.int32)
 
-    scaled_image = image[centers_y[:, None], centers_x[None, :]]
-    return scaled_image
-
-def sample_majority(image, x_coords, y_coords, max_samples=128, iters=6, seed=42):
+def sample_majority(image, x_coords, y_coords, max_samples=256, iters=6, seed=0):
     rng = np.random.default_rng(seed)
 
     img = image.astype(np.float32) if image.dtype != np.float32 else image
@@ -162,7 +232,6 @@ def sample_majority(image, x_coords, y_coords, max_samples=128, iters=6, seed=42
                 d0 = ((cell - c0) ** 2).sum(1)
                 d1 = ((cell - c1) ** 2).sum(1)
                 m1 = d1 < d0
-
                 if np.any(~m1): c0 = cell[~m1].mean(0)
                 if np.any(m1):  c1 = cell[m1].mean(0)
 
@@ -172,54 +241,51 @@ def sample_majority(image, x_coords, y_coords, max_samples=128, iters=6, seed=42
         return np.clip(np.rint(out), 0, 255).astype(np.uint8)
     return out
 
+
 def refine_grids(image, grid_x, grid_y, refine_intensity=0.25):
     H, W = image.shape[:2]
-    x_coords = []
-    y_coords = []
     cell_w = W / grid_x
     cell_h = H / grid_y
 
-    # calculate gradient magnitude
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    grad_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=5)
-    grad_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=5)
+    gray = rgb_to_gray(image)
+    gx, gy = sobel_xy(gray, ksize=5)
 
-    grad_x_sum = np.sum(np.abs(grad_x), axis=0).reshape(-1)
-    grad_y_sum = np.sum(np.abs(grad_y), axis=1).reshape(-1)
+    grad_x_sum = np.sum(np.abs(gx), axis=0).reshape(-1)
+    grad_y_sum = np.sum(np.abs(gy), axis=1).reshape(-1)
 
-    # refine grid lines based on gradient magnitude from center
+    x_coords = []
+    y_coords = []
+
     x = find_best_grid(W / 2, cell_w, cell_w, grad_x_sum)
-    while(x < W + cell_w/2):
+    while x < W + cell_w/2:
         x = find_best_grid(x, cell_w * refine_intensity, cell_w * refine_intensity, grad_x_sum)
         x_coords.append(x)
-        # print(x)
         x += cell_w
     x = find_best_grid(W / 2, cell_w, cell_w, grad_x_sum) - cell_w
-    while(x > -cell_w/2 and len(x_coords) <= W/cell_w):
+    while x > -cell_w/2:
         x = find_best_grid(x, cell_w * refine_intensity, cell_w * refine_intensity, grad_x_sum)
         x_coords.append(x)
-        # print(x)
         x -= cell_w
 
     y = find_best_grid(H / 2, cell_h, cell_h, grad_y_sum)
-    while(y < H + cell_h/2):
-        y = find_best_grid(y, cell_h * refine_intensity, cell_h * refine_intensity, grad_y_sum)   
+    while y < H + cell_h/2:
+        y = find_best_grid(y, cell_h * refine_intensity, cell_h * refine_intensity, grad_y_sum)
         y_coords.append(y)
         y += cell_h
     y = find_best_grid(H / 2, cell_h, cell_h, grad_y_sum) - cell_h
-    while(y > -cell_h/2 and len(y_coords) <= H/cell_h):
-        y = find_best_grid(y, cell_h * refine_intensity, cell_h * refine_intensity, grad_y_sum)   
+    while y > -cell_h/2:
+        y = find_best_grid(y, cell_h * refine_intensity, cell_h * refine_intensity, grad_y_sum)
         y_coords.append(y)
         y -= cell_h
-    
+
     x_coords = sorted(x_coords)
     y_coords = sorted(y_coords)
-
     return x_coords, y_coords
+
 
 def estimate_grid_fft(image, peak_width=6):
     """Return (grid_w, grid_h) or None."""
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = rgb_to_gray(image)
     H, W = gray.shape
 
     mag = compute_fft_magnitude(gray)
@@ -229,53 +295,19 @@ def estimate_grid_fft(image, peak_width=6):
     row_sum = np.sum(mag[:, W//2 - band_row: W//2 + band_row], axis=1)
     col_sum = np.sum(mag[H//2 - band_col: H//2 + band_col, :], axis=0)
 
-    row_sum = cv2.normalize(row_sum, None, 0, 1, cv2.NORM_MINMAX).flatten()
-    col_sum = cv2.normalize(col_sum, None, 0, 1, cv2.NORM_MINMAX).flatten()
+    row_sum = normalize_minmax(row_sum, 0.0, 1.0).flatten()
+    col_sum = normalize_minmax(col_sum, 0.0, 1.0).flatten()
 
     row_sum = smooth_1d(row_sum, k=17)
     col_sum = smooth_1d(col_sum, k=17)
 
-    scale_row = detect_peak(row_sum, peak_width)
-    scale_col = detect_peak(col_sum, peak_width)
+    scale_row = detect_peak(row_sum, peak_width=peak_width)
+    scale_col = detect_peak(col_sum, peak_width=peak_width)
 
     if scale_row is None or scale_col is None or scale_col <= 0:
-        return None, None
+        return None
 
-    grid_w = int(round(scale_col))
-    grid_h = int(round(scale_row))
-    return grid_w, grid_h
-
-def detect_pixel_size(image):
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    H, W = gray.shape
-
-    # Compute FFT
-    mag = compute_fft_magnitude(gray)
-
-    # Compute projections
-    band_row = W // 2
-    band_col = H // 2
-
-    row_sum = np.sum(mag[:, W//2 - band_row: W//2 + band_row], axis=1)
-    col_sum = np.sum(mag[H//2 - band_col: H//2 + band_col, :], axis=0)
-
-    row_sum = cv2.normalize(row_sum, None, 0, 1, cv2.NORM_MINMAX).flatten()
-    col_sum = cv2.normalize(col_sum, None, 0, 1, cv2.NORM_MINMAX).flatten()
-
-    # Smooth projections
-    row_sum = smooth_1d(row_sum, k=17)
-    col_sum = smooth_1d(col_sum, k=17)
-
-    # Detect peaks
-    scale_row = detect_peak(row_sum)
-    scale_col = detect_peak(col_sum)
-    if scale_row is None or scale_col is None:
-        return None, None
-
-    pixel_size_x = W / scale_col
-    pixel_size_y = H / scale_row
-
-    return pixel_size_x, pixel_size_y
+    return scale_col, scale_row
 
 def grid_layout(image, x_coords, y_coords, scale_x, scale_y):
     import matplotlib.pyplot as plt
@@ -291,7 +323,7 @@ def grid_layout(image, x_coords, y_coords, scale_x, scale_y):
 def get_perfect_pixel(image, sample_method="center", grid_size = None, min_size = 3.0, peak_width = 6, refine_intensity = 0.25, fix_square = True, debug=False):
     """
     Args:
-        image: RGB Image
+        image: RGB ndarray (H,W,3) uint8 recommended
         sample_method: "majority" or "center"
         grid_size: Manually set grid size (grid_w, grid_h) to override auto-detection
         min_size: Minimum pixel size to consider valid

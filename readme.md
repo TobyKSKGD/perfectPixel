@@ -19,10 +19,22 @@ This tool automatically detects the optimal grid and delivers perfectly aligned,
 [Try Web Demo](#web-demo)
 
 ## Installation
+
+**Perfect Pixel** provides two implementations of the same core algorithm. The Lighweight Backend is designed in case you can't or don't want to use cv2. You can choose the one that best fits your environment:
+
+| Feature | OpenCV Backend ([`perfectPixel.py`](./perfectPixel.py)) | Lightweight Backend ([`perfectPixelnoCV2.py`](./perfectPixelnoCV2.py)) |
+| :--- | :--- | :--- |
+| **Dependencies** | `opencv-python`, `numpy` | `numpy` |
+
+You can install Perfect Pixel via `pip`. It is recommended to install the OpenCV version for better performance.
+
 ```bash
-git clone https://github.com/theamusing/perfectPixel.git
+# Recommended: Fast version with OpenCV support
+pip install perfect-pixel[opencv]
+
+# Numpy version: Lightweight (NumPy only)
+pip install perfect-pixel
 ```
-or just download the python files and put them into your project folder.
 
 ## Usage 
 ### Step 1: Get pixel style image
@@ -43,50 +55,46 @@ The image is in pixel style but the grids are distorted. Also we don't know the 
 
 ### Step 2: Use Perfect Pixel to refine your image
 
-You can use the [Web Demo](#web-demo) to refine your image.
-
-<img src="./assets/output.png" width="50%" />
-
-The grid size is automatically detected, and the image is refined.
-
-Also you can use the provided python function in your local environment. 
-
-**Perfect Pixel** provides two implementations of the same core algorithm. The Lighweight Backend is designed in case you can't or don't want to use cv2. You can choose the one that best fits your environment:
-
-| Feature | OpenCV Backend ([`perfectPixel.py`](./perfectPixel.py)) | Lightweight Backend ([`perfectPixelnoCV2.py`](./perfectPixelnoCV2.py)) |
-| :--- | :--- | :--- |
-| **Dependencies** | `opencv-python`, `numpy` | `numpy` |
-
-
-#### For the OpenCV Backend
 ```python
 import cv2
-from perfectPixel import getPerfectPixel
+from perfect-pixel import get_perfect_pixel
 
 bgr = cv2.imread("images/avatar.png", cv2.IMREAD_COLOR)
 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
-w, h, out = getPerfectPixel(rgb)
+w, h, out = get_perfect_pixel(rgb)
 ```
+
+<img src="./assets/output.png" width="50%" />
+
 *Also see [example.py](./example.py).*
 ```bash
 python example.py
 ```
 
-#### For the Lightweight Backend
-```python
-from perfectPixelnoCV2 import getPerfectPixel
-from PIL import Image # for example we use PIL to load the image
-
-img = Image.open("images/avatar.png").convert("RGB")
-img_array = np.array(img)
-
-w, h, out = getPerfectPixel(img_array)
-```
+The grid size is automatically detected, and the image is refined.
 
 <img src="./assets/process2.png" width="100%" />
 
 Try integrate it into your own projects!
+
+## API Reference
+| Args | Description | 
+| :--- | :--- |
+| **image** | `RGB Image (H * W * 3)` |
+| **sample_method** | `"majority" or "center"` |
+| **grid_size** | `Manually set grid size (grid_w, grid_h) to override auto-detection` |
+| **min_size** | `Minimum pixel size to consider valid` |
+| **peak_width** | `Minimum peak width for peak detection.` |
+| **refine_intensity** | `Intensity for grid line refinement. Recommended range is [0, 0.5]. Given original estimated grid line at x, the refinement will search in [x * (1 - refine_intensity), x * (1 + refine_intensity)].` |
+| **fix_square** | `Whether to enforce output to be square when detected image is almost square.` |
+| **debug** | `Whether to show debug plots.` |
+
+| Returns | Description |
+| :--- | :--- |
+| **refined_w** | `Width of the refined image` |
+| **refined_h** | `Height of the refined image` |
+| **scaled_image** | `Refined Image(W * H * 3)` |
 
 ## Algorithm
 

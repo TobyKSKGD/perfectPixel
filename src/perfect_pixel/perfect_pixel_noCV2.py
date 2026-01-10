@@ -314,7 +314,7 @@ def grid_layout(image, x_coords, y_coords, scale_x, scale_y):
 def get_perfect_pixel(image, sample_method="center", grid_size = None, min_size = 3.0, peak_width = 6, refine_intensity = 0.25, fix_square = True, debug=False):
     """
     Args:
-        image: RGB ndarray (H,W,3) uint8 recommended
+        image: RGB ndarray (H,W,3)
         sample_method: "majority" or "center"
         grid_size: Manually set grid size (grid_w, grid_h) to override auto-detection
         min_size: Minimum pixel size to consider valid

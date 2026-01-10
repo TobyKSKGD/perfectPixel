@@ -1,0 +1,12 @@
+
+build/
+dist/
+
+venv/
+.venv/
+env/
+
+output/
+output*
+
+*.log

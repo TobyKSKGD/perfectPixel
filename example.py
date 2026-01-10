@@ -1,16 +1,21 @@
 import cv2
 import matplotlib.pyplot as plt
-from perfectPixelnoCV2 import get_perfect_pixel
+from src.perfect_pixel import get_perfect_pixel
 
-path = "shanxi.jpg"
-path = "113.png"
+path = "images/girl.jpg"
+# path = "images/avatar.png"
+# path = "images/robot.jpeg"
+# path = "images/shanxi.jpg"
+# path = "images/skull.png"
+
+
 bgr = cv2.imread(path, cv2.IMREAD_COLOR)
 
 if bgr is None:
     raise FileNotFoundError(f"Cannot read image: {path}")
 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
-w, h, out = get_perfect_pixel(rgb,refine_intensity=0.3, debug=True)
+w, h, out = get_perfect_pixel(rgb, sample_method="center", refine_intensity=0.3, debug=True)
 
 if w is None or h is None:
     print("Failed to generate pixel-perfect image.")

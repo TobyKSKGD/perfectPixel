@@ -1,41 +1,21 @@
 # Perfect Pixel
 
-> **Automatically detect grid size and transforms imperfect AI-generated pixel art into perfectly aligned grids.**
+> **Auto detect and Get perfect Pixel art**
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 
-<table>
-  <tr>
-    <th align="center">AI Generated</th>
-    <th align="center">Refined</th>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="./assets/elf.png" width="500" />
-    </td>
-    <td align="center">
-      <img src="./assets/elf_refined.png" width="500" />
-    </td>
-  </tr>
-  <tr>
-    <td align="center">
-      <img src="./assets/elf_scale.png" width="500" />
-    </td>
-    <td align="center">
-      <img src="./assets/elf_refined_scale.png" width="500" />
-    </td>
-  </tr>
-</table>
-<img src="./assets/Figure_2.png" width="100%" />
+<img src="./assets/process.png" width="100%" />
 
-Notice the inconsistent pixel sizes and blur in the original image.Every pixel is now perfectly 1x1, sharp and clear. 
+Standard scaling often fails to sample AI-generated pixel art due to inconsistent sizes and non-square grids. 
+
+This tool automatically detects the optimal grid and delivers perfectly aligned, pixel-perfect results.
 
 ## Features
-- Automatically detect grid size for pixel arts.
-- Refines pixel style image to perfectly aligned grids.
+- Automatically detect grid size from pixel style images.
+- Refines AI generated pixel style image to perfectly aligned grids.
+- Easy to integrate into your own workflow.
 
-## Web Demo
 [Try Web Demo](#web-demo)
 
 ## Installation
@@ -44,7 +24,33 @@ git clone https://github.com/theamusing/perfectPixel.git
 ```
 or just download the python files and put them into your project folder.
 
-## Usage
+## Usage 
+### Step 1: Get pixel style image
+First you need extra tools to get a pixel styled image. **The recommanded size is between 512 to 1024.**
+
+You can use Stable Diffusion with any Pixel Style Lora, or you can use ChatGPT or Gemini to generate one.
+
+
+For example, I used ChatGPT to transfer an image into pixel style.
+
+```
+prompt: Convert the input image into a TRUE perler bead pixel pattern designed for physical bead crafting, not digital illustration. Canvas size must be exactly 32×32 pixels OR 16×16 pixels, where each pixel represents exactly one perler bead. Use extremely large, chunky pixels with very few active pixels overall. Simplicity is critical. Only keep the main subject. Remove the entire background. For human characters, make sure the face is flat and no shadow. The subject must be centered with clear empty bead rows around all edges to allow easy mounting on a bead board. Add a clean, continuous dark outline around the subject so the silhouette is clearly readable when made with beads. Use a very limited solid color palette (maximum 6–8 colors total). No gradients, no shading, no lighting, no dithering, no texture. No anti-aliasing or smoothing — every pixel must be a perfect square bead aligned to the grid. The output image should be pixel-perfect, each grid only contains one color. Background must be pure solid white.
+```
+
+<img src="./assets/generated.png" width="50%" />
+
+The image is in pixel style but the grids are distorted. Also we don't know the number of grids.
+
+### Step 2: Use Perfect Pixel to refine your image
+
+You can use the [Web Demo](#web-demo) to refine your image.
+
+<img src="./assets/output.png" width="50%" />
+
+The grid size is automatically detected, and the image is refined.
+
+Also you can use the provided python function in your local environment. 
+
 **Perfect Pixel** provides two implementations of the same core algorithm. The Lighweight Backend is designed in case you can't or don't want to use cv2. You can choose the one that best fits your environment:
 
 | Feature | OpenCV Backend ([`perfectPixel.py`](./perfectPixel.py)) | Lightweight Backend ([`perfectPixelnoCV2.py`](./perfectPixelnoCV2.py)) |
@@ -57,10 +63,10 @@ or just download the python files and put them into your project folder.
 import cv2
 from perfectPixel import getPerfectPixel
 
-bgr = cv2.imread("image1.png", cv2.IMREAD_COLOR)
+bgr = cv2.imread("images/avatar.png", cv2.IMREAD_COLOR)
 rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
-w, h, out = get_perfect_pixel(rgb,)
+w, h, out = getPerfectPixel(rgb)
 ```
 *Also see [example.py](./example.py).*
 ```bash
@@ -72,20 +78,27 @@ python example.py
 from perfectPixelnoCV2 import getPerfectPixel
 from PIL import Image # for example we use PIL to load the image
 
-img = Image.open("image.png").convert("RGB")
+img = Image.open("images/avatar.png").convert("RGB")
 img_array = np.array(img)
 
-w, h, out = get_perfect_pixel(imf_array)
+w, h, out = getPerfectPixel(img_array)
 ```
 
-## Use pip
-Once published to PyPI, you will be able to install it via:
-```
-pip install perfect-pixel
-```
-```python
-from perfect-pixel import getPerfectPixel 
-```
+<img src="./assets/process2.png" width="100%" />
+
+Try integrate it into your own projects!
+
+## Algorithm
+
+<img src="./assets/algorithm.png" width="100%" />
+
+The whole algorithm mainly contains 3 steps:
+1. Detect grid size from FFT magnitude of the original image and generate grids.
+2. Detect edges using Sobel and refine the grids by aligning them to edges.
+3. Use the grids to sample the original image and to get the scaled image.
+
+
+
 
 
 

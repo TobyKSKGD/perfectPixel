@@ -239,7 +239,7 @@ def refine_grids(image, grid_x, grid_y, refine_intensity=0.25):
     cell_h = H / grid_y
 
     gray = rgb_to_gray(image)
-    gx, gy = sobel_xy(gray, ksize=5)
+    gx, gy = sobel_xy(gray, ksize=3)
 
     grad_x_sum = np.sum(np.abs(gx), axis=0).reshape(-1)
     grad_y_sum = np.sum(np.abs(gy), axis=1).reshape(-1)
@@ -273,10 +273,8 @@ def refine_grids(image, grid_x, grid_y, refine_intensity=0.25):
     y_coords = sorted(y_coords)
     return x_coords, y_coords
 
-
-def estimate_grid_fft(image, peak_width=6):
+def estimate_grid_fft(gray, peak_width=6):
     """Return (grid_w, grid_h) or None."""
-    gray = rgb_to_gray(image)
     H, W = gray.shape
 
     mag = compute_fft_magnitude(gray)
@@ -300,6 +298,84 @@ def estimate_grid_fft(image, peak_width=6):
 
     return scale_col, scale_row
 
+def estimate_grid_gradient(gray, rel_thr=0.2):
+    H, W = gray.shape
+
+    grad_x, grad_y = sobel_xy(gray, ksize=3)
+
+    grad_x_sum = np.sum(np.abs(grad_x), axis=0).reshape(-1)
+    grad_y_sum = np.sum(np.abs(grad_y), axis=1).reshape(-1)
+
+    peak_x = []
+    peak_y = []
+
+    thr_x = float(rel_thr) * float(grad_x_sum.max())
+    thr_y = float(rel_thr) * float(grad_y_sum.max())
+
+    min_interval = 4
+    for i in range(1, len(grad_x_sum) - 1):
+        if grad_x_sum[i] > grad_x_sum[i - 1] and grad_x_sum[i] > grad_x_sum[i + 1] and grad_x_sum[i] >= thr_x:
+            if len(peak_x) == 0 or i - peak_x[-1] >= min_interval:
+                peak_x.append(i)
+
+    for i in range(1, len(grad_y_sum) - 1):
+        if grad_y_sum[i] > grad_y_sum[i - 1] and grad_y_sum[i] > grad_y_sum[i + 1] and grad_y_sum[i] >= thr_y:
+            if len(peak_y) == 0 or i - peak_y[-1] >= min_interval:
+                peak_y.append(i)
+
+    if len(peak_x) < 4 or len(peak_y) < 4:
+        return None, None
+
+    # get median interval
+    intervals_x = []
+    for i in range(1, len(peak_x)):
+        intervals_x.append(peak_x[i] - peak_x[i - 1])
+    intervals_y = []
+    for i in range(1, len(peak_y)):
+        intervals_y.append(peak_y[i] - peak_y[i - 1])
+    
+    scale_x = W / np.median(intervals_x)
+    scale_y = H / np.median(intervals_y)
+
+    print(f"Detected grid size from gradient: ({scale_x:.2f}, {scale_y:.2f})")
+
+    return int(round(scale_x)), int(round(scale_y))
+
+def detect_grid_scale(image, peak_width=6, max_ratio=1.5, min_size=4.0):
+    gray = rgb_to_gray(image)
+    H, W = gray.shape
+
+    grid_w, grid_h =  estimate_grid_fft(gray, peak_width=peak_width)
+    if grid_w is None or grid_h is None:
+        print("FFT-based grid estimation failed, fallback to gradient-based method.")
+        grid_w, grid_h = estimate_grid_gradient(gray)
+    else:
+        pixel_size_x = W / grid_w
+        pixel_size_y = H / grid_h
+        max_pixel_size = 20.0
+        if min(pixel_size_x, pixel_size_y) < min_size or max(pixel_size_x, pixel_size_y) > max_pixel_size or pixel_size_x / pixel_size_y > max_ratio or pixel_size_y / pixel_size_x > max_ratio:
+            print("Inconsistent grid size detected (FFT-based), fallback to gradient-based method.")
+            grid_w, grid_h = estimate_grid_gradient(gray)
+
+    if grid_w is None or grid_h is None:
+        print("Gradient-based grid estimation failed.")
+        return None, None
+
+    pixel_size_x = W / grid_w
+    pixel_size_y = H / grid_h
+    
+    if pixel_size_x / pixel_size_y > max_ratio or pixel_size_y / pixel_size_x > max_ratio:
+        pixel_size = min(pixel_size_x, pixel_size_y)
+    else:   
+        pixel_size = (pixel_size_x + pixel_size_y) / 2.0
+
+    print(f"Detected pixel size: {pixel_size:.2f}")
+
+    grid_w = int(round(W / pixel_size))
+    grid_h = int(round(H / pixel_size))
+
+    return grid_w, grid_h
+
 def grid_layout(image, x_coords, y_coords, scale_x, scale_y):
     import matplotlib.pyplot as plt
     plt.figure()
@@ -311,10 +387,10 @@ def grid_layout(image, x_coords, y_coords, scale_x, scale_y):
         plt.axhline(y=y, linewidth=0.6)
     plt.show()
 
-def get_perfect_pixel(image, sample_method="center", grid_size = None, min_size = 3.0, peak_width = 6, refine_intensity = 0.25, fix_square = True, debug=False):
+def get_perfect_pixel(image, sample_method="center", grid_size = None, min_size = 4.0, peak_width = 6, refine_intensity = 0.25, fix_square = True, debug=False):
     """
     Args:
-        image: RGB ndarray (H,W,3)
+        image: RGB ndArray (H * W * 3)
         sample_method: "majority" or "center"
         grid_size: Manually set grid size (grid_w, grid_h) to override auto-detection
         min_size: Minimum pixel size to consider valid
@@ -328,24 +404,18 @@ def get_perfect_pixel(image, sample_method="center", grid_size = None, min_size 
     """
     H, W = image.shape[:2]
     if grid_size is not None:
+        # use provided grid size
         scale_col, scale_row = grid_size
     else:
-        scale_col, scale_row = estimate_grid_fft(image, peak_width)
+        scale_col, scale_row = detect_grid_scale(image, peak_width=peak_width, max_ratio=1.5, min_size=min_size)
         if scale_col is None or scale_row is None:
             print("Failed to estimate grid size.")
             return None, None, image
-        
-    pixel_size = min(W / scale_col, H / scale_row)
-    if(pixel_size <= min_size):
-        print("Detected grid size is too small: {:.2f} pixels".format(pixel_size))
-        return None, None, image
-    print("Estimated grid size: {:.2f} pixels".format(pixel_size))
 
     size_x = int(round(scale_col))
     size_y = int(round(scale_row))
-
-    # refine grid lines
     x_coords, y_coords = refine_grids(image, size_x, size_y, refine_intensity)
+
     refined_size_x = len(x_coords) - 1
     refined_size_y = len(y_coords) - 1
 
